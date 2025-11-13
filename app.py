@@ -3,7 +3,7 @@ import pandas as pd
 import json
 
 st.title("Directus → Clean CSV Converter")
-st.write("Upload a Directus JSON export and convert it into a flattened CSV matching the Live Site format.")
+st.write("Upload a Directus JSON export and convert it into a flattened CSV matching the current site format.")
 
 # -------------------------
 # Utility: Flatten a single record
