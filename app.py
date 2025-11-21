@@ -25,9 +25,9 @@ def utc_to_pacific_date(utc_str):
         return utc_str  # Return original if parsing fails
 
 # -------------------------
-# Utility: Flatten a single record
+# Utility: Flatten a workplace_user record (OLD FORMAT)
 # -------------------------
-def flatten_record(rec):
+def flatten_workplace_user(rec):
     """Flatten one workplace_user record into a single row."""
     out = {}
     # folder (simple scalar)
@@ -49,25 +49,80 @@ def flatten_record(rec):
     return out
 
 # -------------------------
+# Utility: Flatten a test submission record (NEW FORMAT)
+# -------------------------
+def flatten_test_submission(rec):
+    """Flatten one test submission record into a single row."""
+    out = {}
+    
+    # Basic fields
+    out["submission_id"] = rec.get("id")
+    out["test_id"] = rec.get("test")
+    out["type"] = rec.get("type")
+    out["website_url"] = rec.get("website_url")
+    
+    # User info
+    user = rec.get("user", {}) or {}
+    out["user_email"] = user.get("email")
+    
+    # Convert timestamp to Pacific date
+    raw_timestamp = rec.get("submitted")
+    out["export_variables_last_updated_at"] = utc_to_pacific_date(raw_timestamp)
+    
+    # Flatten variables array into columns
+    variables = rec.get("variables", []) or []
+    for var_obj in variables:
+        if isinstance(var_obj, dict):
+            var_info = var_obj.get("variable", {})
+            machine_name = var_info.get("machine_name")
+            value = var_obj.get("value")
+            if machine_name:
+                out[machine_name] = value
+    
+    return out
+
+# -------------------------
 # Upload widget
 # -------------------------
 uploaded = st.file_uploader("Upload Directus JSON file", type=["json"])
 
 if uploaded:
     data = json.load(uploaded)
-    # Directus usually gives something like: [{"workplace_users": [...] }]
-    root = data[0] if isinstance(data, list) else data
-    workplace_users = root.get("workplace_users", [])
     
-    if not workplace_users:
-        st.error("No workplace_users found in JSON.")
-    else:
-        # Flatten each user
-        rows = [flatten_record(r) for r in workplace_users]
-        df = pd.DataFrame(rows)
+    # Detect format
+    if isinstance(data, list) and len(data) > 0:
+        first_item = data[0]
         
+        # Check if it's the OLD format (workplace_users)
+        if "workplace_users" in first_item:
+            st.info("Detected: Workplace Users format (old)")
+            workplace_users = first_item.get("workplace_users", [])
+            if not workplace_users:
+                st.error("No workplace_users found in JSON.")
+            else:
+                rows = [flatten_workplace_user(r) for r in workplace_users]
+                df = pd.DataFrame(rows)
+        
+        # Check if it's the NEW format (test submissions)
+        elif "submitted" in first_item and "variables" in first_item:
+            st.info("Detected: Test Submissions format (new)")
+            rows = [flatten_test_submission(r) for r in data]
+            df = pd.DataFrame(rows)
+        
+        else:
+            st.error("Unknown JSON format. Expected either 'workplace_users' or 'submitted' fields.")
+            df = None
+    else:
+        st.error("Invalid JSON structure.")
+        df = None
+    
+    if df is not None:
         st.subheader("Preview of Flattened Data")
         st.dataframe(df.head())
+        
+        # Show column count
+        st.write(f"**Total columns:** {len(df.columns)}")
+        st.write(f"**Total rows:** {len(df)}")
         
         # Download button
         csv = df.to_csv(index=False)
