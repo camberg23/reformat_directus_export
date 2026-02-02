@@ -54,21 +54,21 @@ def flatten_workplace_user(rec):
 def flatten_test_submission(rec):
     """Flatten one test submission record into a single row."""
     out = {}
-    
+
     # Basic fields
     out["submission_id"] = rec.get("id")
     out["test_id"] = rec.get("test")
     out["type"] = rec.get("type")
     out["website_url"] = rec.get("website_url")
-    
+
     # User info
     user = rec.get("user", {}) or {}
     out["user_email"] = user.get("email")
-    
+
     # Convert timestamp to Pacific date
     raw_timestamp = rec.get("submitted")
     out["export_variables_last_updated_at"] = utc_to_pacific_date(raw_timestamp)
-    
+
     # Flatten variables array into columns
     variables = rec.get("variables", []) or []
     for var_obj in variables:
@@ -78,7 +78,55 @@ def flatten_test_submission(rec):
             value = var_obj.get("value")
             if machine_name:
                 out[machine_name] = value
-    
+
+    return out
+
+# -------------------------
+# Utility: Flatten a Truity @ Work user record (TRUITY FORMAT)
+# -------------------------
+def flatten_truity_work_user(rec):
+    """Flatten one Truity @ Work user record into a single row."""
+    out = {}
+
+    # client_user fields
+    cu = rec.get("client_user", {}) or {}
+    out["user_name"] = cu.get("name")
+    out["user_email"] = cu.get("email")
+
+    # pro_user fields
+    pu = rec.get("pro_user", {}) or {}
+    out["pro_user_email"] = pu.get("email")
+
+    # folder (can be null or object with 'name')
+    folder = rec.get("folder")
+    out["folder"] = folder.get("name") if isinstance(folder, dict) else None
+
+    # website_url
+    out["website_url"] = rec.get("website_url")
+
+    # export_variables is an array of {date_updated, variable_name, value}
+    export_vars = cu.get("export_variables", []) or []
+
+    # Track the most recent date_updated for the overall timestamp
+    latest_date = None
+
+    for var_obj in export_vars:
+        if isinstance(var_obj, dict):
+            var_name = var_obj.get("variable_name")
+            value = var_obj.get("value")
+            date_updated = var_obj.get("date_updated")
+
+            if var_name:
+                out[var_name] = value
+
+            # Track the latest date
+            if date_updated:
+                if latest_date is None or date_updated > latest_date:
+                    latest_date = date_updated
+
+    # Set the overall last updated timestamp
+    out["export_variables_last_updated_at"] = utc_to_pacific_date(latest_date)
+
     return out
 
 # -------------------------
@@ -92,7 +140,7 @@ if uploaded:
     # Detect format
     if isinstance(data, list) and len(data) > 0:
         first_item = data[0]
-        
+
         # Check if it's the OLD format (workplace_users)
         if "workplace_users" in first_item:
             st.info("Detected: Workplace Users format (old)")
@@ -102,15 +150,21 @@ if uploaded:
             else:
                 rows = [flatten_workplace_user(r) for r in workplace_users]
                 df = pd.DataFrame(rows)
-        
-        # Check if it's the NEW format (test submissions)
+
+        # Check if it's the Truity @ Work format (client_user + pro_user)
+        elif "client_user" in first_item and "pro_user" in first_item:
+            st.info("Detected: Truity @ Work Users format")
+            rows = [flatten_truity_work_user(r) for r in data]
+            df = pd.DataFrame(rows)
+
+        # Check if it's the test submissions format
         elif "submitted" in first_item and "variables" in first_item:
-            st.info("Detected: Test Submissions format (new)")
+            st.info("Detected: Test Submissions format")
             rows = [flatten_test_submission(r) for r in data]
             df = pd.DataFrame(rows)
-        
+
         else:
-            st.error("Unknown JSON format. Expected either 'workplace_users' or 'submitted' fields.")
+            st.error("Unknown JSON format. Expected 'workplace_users', 'client_user/pro_user', or 'submitted/variables' fields.")
             df = None
     else:
         st.error("Invalid JSON structure.")
